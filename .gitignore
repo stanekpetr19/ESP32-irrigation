@@ -1,0 +1,20 @@
+# Python / uv
+.venv/
+__pycache__/
+*.py[cod]
+.ruff_cache/
+.pytest_cache/
+
+# ESPHome build/cache/secrets
+.esphome/
+esphome/.esphome/
+esphome/secrets.yaml
+
+# VS Code local/user files
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+
+# OS/editor
+.DS_Store
+Thumbs.db

@@ -1,0 +1,14 @@
+[project]
+name = "eps32-irrigation"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "esphome>=2026.5.3",
+]
+
+[dependency-groups]
+dev = [
+    "pre-commit>=4.6.0",
+    "ruff>=0.15.17",
+    "yamllint>=1.38.0",
+]
