@@ -1,24 +1,23 @@
 substitutions:
   device_name: irrigation-relay-test
-  friendly_name: "Irrigation Relay Test"
+  friendly_name: "Irrigation Controller"
+  firmware_version: "0.2.0"
+  valve_switch_time: 15s
 
 esphome:
   name: ${device_name}
   friendly_name: ${friendly_name}
-  comment: "First ESPHome firmware for ESP32 relay irrigation board"
+  comment: "ESPHome irrigation controller firmware ${firmware_version}"
 
   on_boot:
     priority: 800
     then:
-      - logger.log: "Boot: forcing all relays OFF"
-      - switch.turn_off: relay_1
-      - switch.turn_off: relay_2
-      - switch.turn_off: relay_3
-      - switch.turn_off: relay_4
-      - switch.turn_off: relay_5
-      - switch.turn_off: relay_6
-      - switch.turn_off: relay_7
-      - switch.turn_off: relay_8
+      - logger.log: "Boot: all valve relays OFF, valve state UNKNOWN"
+      - script.execute: all_valve_relays_off
+      - lambda: |-
+          id(valves_changing_state) = 0;
+          id(valve1_source_state) = 0;
+          id(valve2_outlet_state) = 0;
 
 esp32:
   board: esp32dev
@@ -55,25 +54,6 @@ web_server:
 
 mdns:
 
-button:
-  - platform: restart
-    name: "${friendly_name} Restart"
-
-  - platform: safe_mode
-    name: "${friendly_name} Restart in Safe Mode"
-
-binary_sensor:
-  - platform: gpio
-    id: rescue_jumper_gpio23
-    name: "${friendly_name} Rescue Jumper GPIO23"
-    pin:
-      number: GPIO23
-      mode:
-        input: true
-        pullup: true
-      inverted: true
-    entity_category: diagnostic
-
 sensor:
   - platform: wifi_signal
     name: "${friendly_name} WiFi Signal"
@@ -82,52 +62,48 @@ sensor:
   - platform: uptime
     name: "${friendly_name} Uptime"
 
-text_sensor:
-  - platform: version
-    name: "${friendly_name} ESPHome Version"
-
-  - platform: wifi_info
-    ip_address:
-      name: "${friendly_name} IP Address"
-    ssid:
-      name: "${friendly_name} Connected SSID"
-
 switch:
   - platform: gpio
-    name: "${friendly_name} Relay 1 GPIO32"
-    id: relay_1
+    name: "${friendly_name} R1P1 Pump 1"
+    id: relay_1_pump_1
     pin: GPIO32
     restore_mode: ALWAYS_OFF
+    internal: true
 
   - platform: gpio
-    name: "${friendly_name} Relay 2 GPIO33"
-    id: relay_2
+    name: "${friendly_name} R2P1 Pump 2"
+    id: relay_2_pump_2
     pin: GPIO33
     restore_mode: ALWAYS_OFF
+    internal: true
 
   - platform: gpio
-    name: "${friendly_name} Relay 3 GPIO25"
-    id: relay_3
+    name: "${friendly_name} R3V1 Tank"
+    id: relay_3_valve1_tank
     pin: GPIO25
     restore_mode: ALWAYS_OFF
+    interlock: [relay_4_valve1_well]
 
   - platform: gpio
-    name: "${friendly_name} Relay 4 GPIO26"
-    id: relay_4
+    name: "${friendly_name} R4V1 Well"
+    id: relay_4_valve1_well
     pin: GPIO26
     restore_mode: ALWAYS_OFF
+    interlock: [relay_3_valve1_tank]
 
   - platform: gpio
-    name: "${friendly_name} Relay 5 GPIO27"
-    id: relay_5
+    name: "${friendly_name} R5V2 Irrigation"
+    id: relay_5_valve2_irrigation
     pin: GPIO27
     restore_mode: ALWAYS_OFF
+    interlock: [relay_6_valve2_tank_fill]
 
   - platform: gpio
-    name: "${friendly_name} Relay 6 GPIO12"
-    id: relay_6
+    name: "${friendly_name} R6V2 Tank Fill"
+    id: relay_6_valve2_tank_fill
     pin: GPIO14
     restore_mode: ALWAYS_OFF
+    interlock: [relay_5_valve2_irrigation]
 
   - platform: gpio
     name: "${friendly_name} Relay 7 GPIO13"
@@ -136,9 +112,233 @@ switch:
       number: GPIO12
       ignore_strapping_warning: true
     restore_mode: ALWAYS_OFF
+    internal: true
 
   - platform: gpio
     name: "${friendly_name} Relay 8 GPIO14"
     id: relay_8
     pin: GPIO13
     restore_mode: ALWAYS_OFF
+    internal: true
+
+globals:
+  # 0 = unknown/changing, 1 = tank, 2 = well
+  - id: valve1_source_state
+    type: int
+    restore_value: true
+    initial_value: '0'
+
+  # 0 = unknown/changing, 1 = irrigation, 2 = tank_fill
+  - id: valve2_outlet_state
+    type: int
+    restore_value: true
+    initial_value: '0'
+
+  # 0 = idle, 1 = changing
+  - id: valves_changing_state
+    type: int
+    restore_value: false
+    initial_value: '0'
+
+binary_sensor:
+  - platform: template
+    name: "${friendly_name} Valves Changing"
+    id: valves_changing
+    lambda: |-
+      return id(valves_changing_state) == 1;
+
+  - platform: template
+    name: "${friendly_name} Irrigation Ready"
+    id: irrigation_ready
+    lambda: |-
+      return id(valves_changing_state) == 0
+             && id(valve1_source_state) == 1
+             && id(valve2_outlet_state) == 1;
+
+  - platform: template
+    name: "${friendly_name} Tank Refill Ready"
+    id: tank_refill_ready
+    lambda: |-
+      return id(valves_changing_state) == 0
+             && id(valve1_source_state) == 2
+             && id(valve2_outlet_state) == 2;
+
+  - platform: template
+    name: "${friendly_name} Off Mode Ready"
+    id: off_mode_ready
+    lambda: |-
+      return id(valves_changing_state) == 0
+             && id(valve1_source_state) == 1
+             && id(valve2_outlet_state) == 2;
+
+  - platform: template
+    name: "${friendly_name} Well To Irrigation Ready"
+    id: well_to_irrigation_ready
+    lambda: |-
+      return id(valves_changing_state) == 0
+             && id(valve1_source_state) == 2
+             && id(valve2_outlet_state) == 1;
+
+text_sensor:
+  - platform: version
+    name: "${friendly_name} ESPHome Version"
+
+  - platform: template
+    name: "${friendly_name} Firmware Version"
+    lambda: |-
+      return {"${firmware_version}"};
+
+  - platform: template
+    name: "${friendly_name} Valve Mode"
+    id: valve_mode_text
+    update_interval: 2s
+    lambda: |-
+      if (id(valves_changing_state) == 1) {
+        return {"CHANGING"};
+      }
+
+      int v1 = id(valve1_source_state);
+      int v2 = id(valve2_outlet_state);
+
+      if (v1 == 1 && v2 == 2) return {"OFF"};
+      if (v1 == 1 && v2 == 1) return {"IRRIGATION"};
+      if (v1 == 2 && v2 == 2) return {"REFILL_TANK"};
+      if (v1 == 2 && v2 == 1) return {"WELL_TO_IRRIGATION"};
+
+      return {"UNKNOWN"};
+
+  - platform: wifi_info
+    ip_address:
+      name: "${friendly_name} IP Address"
+    ssid:
+      name: "${friendly_name} Connected SSID"
+  
+script:
+  - id: all_valve_relays_off
+    mode: restart
+    then:
+      - switch.turn_off: relay_3_valve1_tank
+      - switch.turn_off: relay_4_valve1_well
+      - switch.turn_off: relay_5_valve2_irrigation
+      - switch.turn_off: relay_6_valve2_tank_fill
+
+  - id: prepare_off_mode
+    mode: single
+    then:
+      - logger.log: "Preparing OFF mode: tank source + tank-fill outlet"
+      - lambda: |-
+          id(valves_changing_state) = 1;
+          id(valve1_source_state) = 0;
+          id(valve2_outlet_state) = 0;
+      - script.execute: all_valve_relays_off
+      - delay: 500ms
+      - switch.turn_on: relay_3_valve1_tank
+      - switch.turn_on: relay_6_valve2_tank_fill
+      - delay: ${valve_switch_time}
+      - script.execute: all_valve_relays_off
+      - lambda: |-
+          id(valve1_source_state) = 1;
+          id(valve2_outlet_state) = 2;
+          id(valves_changing_state) = 0;
+      - logger.log: "OFF mode ready"
+
+  - id: prepare_irrigation_mode
+    mode: single
+    then:
+      - logger.log: "Preparing IRRIGATION mode: tank source + irrigation outlet"
+      - lambda: |-
+          id(valves_changing_state) = 1;
+          id(valve1_source_state) = 0;
+          id(valve2_outlet_state) = 0;
+      - script.execute: all_valve_relays_off
+      - delay: 500ms
+      - switch.turn_on: relay_3_valve1_tank
+      - switch.turn_on: relay_5_valve2_irrigation
+      - delay: ${valve_switch_time}
+      - script.execute: all_valve_relays_off
+      - lambda: |-
+          id(valve1_source_state) = 1;
+          id(valve2_outlet_state) = 1;
+          id(valves_changing_state) = 0;
+      - logger.log: "IRRIGATION mode ready"
+
+  - id: prepare_tank_refill_mode
+    mode: single
+    then:
+      - logger.log: "Preparing REFILL_TANK mode: well source + tank-fill outlet"
+      - lambda: |-
+          id(valves_changing_state) = 1;
+          id(valve1_source_state) = 0;
+          id(valve2_outlet_state) = 0;
+      - script.execute: all_valve_relays_off
+      - delay: 500ms
+      - switch.turn_on: relay_4_valve1_well
+      - switch.turn_on: relay_6_valve2_tank_fill
+      - delay: ${valve_switch_time}
+      - script.execute: all_valve_relays_off
+      - lambda: |-
+          id(valve1_source_state) = 2;
+          id(valve2_outlet_state) = 2;
+          id(valves_changing_state) = 0;
+      - logger.log: "REFILL_TANK mode ready"
+
+  - id: prepare_well_to_irrigation_mode
+    mode: single
+    then:
+      - logger.log: "Preparing WELL_TO_IRRIGATION mode: well source + irrigation outlet"
+      - lambda: |-
+          id(valves_changing_state) = 1;
+          id(valve1_source_state) = 0;
+          id(valve2_outlet_state) = 0;
+      - script.execute: all_valve_relays_off
+      - delay: 500ms
+      - switch.turn_on: relay_4_valve1_well
+      - switch.turn_on: relay_5_valve2_irrigation
+      - delay: ${valve_switch_time}
+      - script.execute: all_valve_relays_off
+      - lambda: |-
+          id(valve1_source_state) = 2;
+          id(valve2_outlet_state) = 1;
+          id(valves_changing_state) = 0;
+      - logger.log: "WELL_TO_IRRIGATION mode ready"
+
+button:
+  - platform: restart
+    name: "${friendly_name} Restart"
+
+  - platform: safe_mode
+    name: "${friendly_name} Restart in Safe Mode"
+
+  - platform: template
+    name: "${friendly_name} Prepare OFF Mode"
+    id: prepare_off_button
+    on_press:
+      - script.execute: prepare_off_mode
+
+  - platform: template
+    name: "${friendly_name} Prepare Irrigation Mode"
+    id: prepare_irrigation_button
+    on_press:
+      - script.execute: prepare_irrigation_mode
+
+  - platform: template
+    name: "${friendly_name} Prepare Tank Refill Mode"
+    id: prepare_tank_refill_button
+    on_press:
+      - script.execute: prepare_tank_refill_mode
+
+  - platform: template
+    name: "${friendly_name} Prepare Well To Irrigation Mode"
+    id: prepare_well_to_irrigation_button
+    on_press:
+      - script.execute: prepare_well_to_irrigation_mode
+
+  - platform: template
+    name: "${friendly_name} Force Valve Relays Off"
+    entity_category: diagnostic
+    on_press:
+      - script.execute: all_valve_relays_off
+      - lambda: |-
+          id(valves_changing_state) = 0;
+          id(valve1_source_state) = 0;
+          id(valve2_outlet_state) = 0;
